@@ -1,0 +1,173 @@
+# =============================================================================
+# 运行时配置（爬虫 / DeepSeek / 去重 / 存储 / 推送 / 可观测性）
+#
+# 所有会调参的东西都在这里；代码只读配置。
+# 相对路径（prompt_template / sources_path / storage.db_path）按项目根目录解析。
+# =============================================================================
+
+# ---------------------------------------------------------------- DeepSeek 大模型
+llm:
+  provider: deepseek
+  base_url: "https://api.deepseek.com"
+  chat_path: "/chat/completions"
+  model: "deepseek-chat"
+
+  # 密钥：按约定直接填在这里；留空时回退读取环境变量（见 api_key_env），密钥不必入库
+  api_key: ""
+  api_key_env: "DEEPSEEK_API_KEY"
+
+  temperature: 0.1
+  max_tokens: 4096
+  timeout_seconds: 90
+  max_retries: 2                # 只对网络错误 / 429 / 5xx 重试
+  retry_backoff_seconds: 2.0
+  json_response_format: true    # 使用 response_format={"type":"json_object"} 强制 JSON
+
+  batch_size: 5                 # 一次请求最多送几条候选
+  content_max_chars: 1300       # 送入 LLM 的正文截断（按关键词择段，不是简单截头）
+  max_tokens_per_run: 60000     # 单次运行 token 预算（prompt+completion，0 = 不限）
+  prompt_template: "config/prompts/filter_prompt.md"
+  extra_headers: {}
+
+# ---------------------------------------------------------------- 爬虫 / 反爬
+crawl:
+  timeout_seconds: 20
+  max_retries: 3
+  retry_backoff_seconds: 1.5     # 指数退避 + 抖动
+  delay_seconds: 1.0             # 同一站内请求间隔，避免打太快
+  user_agent_pool: []            # 留空则用 fake-useragent + 内置池
+  prefer_fake_useragent: true
+  proxies: ""                    # 如 "http://127.0.0.1:7890"，留空不走代理
+  verify_tls: true
+  trust_env: true                # 是否读取系统 HTTP(S)_PROXY 环境变量
+  max_items_per_source: 10
+  fetch_detail: true             # 是否进详情页抽正文
+  content_min_chars: 200         # 正文短于此值视为疑似 JS 渲染，触发 Selenium 兜底
+
+  # 列表页先粗筛：只给通过的条目抓详情页（URL 去重 + 标题/摘要黑名单 + 宽松粗召回）
+  list_prefilter: true
+  # 同一次运行内复用已抓过的页面（列表页/详情页，省请求、降反爬风险）
+  page_cache: true
+  # 单源连续失败熔断：连续失败 N 次后冷却一段时间不再抓（0 = 关闭）
+  source_failure_threshold: 3
+  source_cooldown_minutes: 360
+  health_store: "data/source_health.json"
+  selenium_fallback:
+    enabled: true
+    wait_seconds: 3
+    headless: true
+    page_load_timeout: 20
+    driver_path: ""              # 留空用 PATH 里的 chromedriver
+
+  # 只填 URL 的自动适配：AI 生成解析规则 -> 确定性校验 -> 落盘缓存
+  # 运行期不逐页调用 AI（成本/稳定性/可复现），AI 只在首次生成或页面结构变化时调用
+  auto:
+    enabled: true
+    prompt_template: "config/prompts/source_adapter_prompt.md"
+    max_attempts: 3              # 生成的选择器校验不过时，带错误信息重试的次数
+    html_max_chars: 12000        # 送 AI 的页面 HTML 截断长度
+    min_items: 1                 # 列表页至少要抽到几条才算适配成功
+    min_detail_chars: 200        # 详情页正文选择器至少要抽出多少字
+    heuristic_fallback: true     # AI 不可用/失败时的确定性兜底
+    detail_adapt: true           # 是否让 AI 顺带生成详情页正文选择器
+    profile_cache: "data/source_profiles.json"   # 解析规则缓存（生成一次后复用）
+
+    # 第二层兜底：选择器都抽不到条目时，让 AI 直接读页面输出条目 JSON
+    # （仅在选择器失败时触发，每次运行最多 1 次调用；条目后续走同一套去重/筛选/推送）
+    item_fallback: true
+    item_prompt_template: "config/prompts/item_extraction_prompt.md"
+    item_text_max_chars: 8000
+    item_max_items: 20
+    # 第三层兜底：AI 抽取也失败时，把整页当成一个候选条目（推送的是列表页 URL）
+    page_fallback: true
+    # 规则自愈：缓存规则连续 N 次抽到 0 条就删除并重新生成（0 = 关闭）
+    self_heal_after: 2
+
+# ---------------------------------------------------------------- 预处理 / 去重
+preprocess:
+  min_content_chars: 80          # 清洗后正文低于此值直接丢弃（日志留痕）
+  max_content_chars: 20000       # 入库截断
+  strip_query_params:            # URL 归一化时剔除的跟踪参数
+    - utm_source
+    - utm_medium
+    - utm_campaign
+    - utm_term
+    - utm_content
+    - utm_id
+    - fbclid
+    - gclid
+    - yclid
+    - msclkid
+    - spm
+    - ref
+    - ref_src
+    - from
+    - share_token
+    - igshid
+  blacklist_keywords:            # 硬规则粗筛：命中即丢弃（先过滤明显无关内容，省 AI 调用）
+    - "招聘"
+    - "抽奖"
+    - "优惠券"
+    - "广告位"
+    - "版权声明"
+    - "点击下载 App"
+  drop_short_title: true
+
+dedup:
+  url_window_days: 30            # URL 归一化查重的回溯窗口
+  content_window_days: 7         # simhash 与近 N 天记录比对
+  hamming_threshold: 3           # 汉明距离 <= 阈值视为重复（越小越严格）
+  fingerprint_max_scan: 5000     # 单次比对最多扫多少条历史指纹
+
+# ---------------------------------------------------------------- 存储（幂等）
+storage:
+  db_path: "data/state.db"       # sqlite：URL 去重、指纹、筛选结果、丢弃样本、推送记录
+  dropped_sample_retention_days: 7
+  dropped_sample_max_chars: 200
+
+# ---------------------------------------------------------------- 推送
+push:
+  enabled: true
+  max_per_run: 10
+  channels: ["wecom_news"]       # 走原有 send_wcom_msg.send_news，接口不变
+  description_max_chars: 500
+  reason_max_chars: 160
+  dry_run: false                 # true 时只打日志不真正发送
+
+  # 推送渠道配置：请求地址与 sendkey 都放这里（不再写死在代码里）
+  # sendkey 留空时回退环境变量 sendkey_env，便于密钥不入库
+  wecom:
+    api_url: ""                  # ← 填 send-post.php 的完整地址，例如 https://your-host/send-post.php
+    sendkey: ""                  # ← 填 sendkey
+    sendkey_env: "WECOM_SENDKEY"
+    timeout_seconds: 15
+
+# ---------------------------------------------------------------- 重要报错通知（文字消息）
+notify:
+  enabled: true                  # 重要报错时调用 send_text 发文字消息（走同一个 push.wecom 渠道）
+  channel: "wecom_text"
+  events:                        # 只有这些事件会发通知，避免刷屏
+    - run_aborted                # 缺密钥 / 无可用源等原因终止
+    - config_error               # 配置校验失败
+    - crawl_failure              # 列表页/详情页抓取失败
+    - source_adapt_failure       # 只填 URL 的自动适配失败
+    - llm_failure                # DeepSeek 调用失败（含重试后仍失败）
+    - parse_failure              # LLM 返回解析/校验失败
+    - push_failure               # 推送失败
+    - summary                    # 本次运行有失败时的汇总
+  max_per_run: 5                 # 单次运行最多发几条通知
+  min_interval_seconds: 300      # 同一类同内容通知的去重间隔（秒）
+  text_max_chars: 1000
+  dry_run_silent: true           # dry-run 时不发通知
+  include_summary: true          # 有失败时补一条汇总
+
+# ---------------------------------------------------------------- 可观测性
+observability:
+  log_dropped_samples: true
+  log_stage_counts: true
+  log_summary: true
+  prompt_preview_chars: 0        # >0 时把渲染后的 prompt 前 N 字打进日志（排查用）
+  event_prefix: "[pipeline]"
+
+# ---------------------------------------------------------------- 源配置
+sources_path: "config/sources.yaml"

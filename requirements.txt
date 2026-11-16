@@ -1,0 +1,16 @@
+# 新增流水线所需的第三方依赖
+#
+# 现有工程已装：requests / lxml / selenium / fake-useragent（沿用，不重复锁定版本）。
+# 新增仅一项：PyYAML（配置驱动）。
+#
+# 安装：
+#   python -m pip install -r requirements.txt
+#
+# 可选增强（不装也能跑，代码会自动降级）：
+#   trafilatura  正文抽取优先用它，未安装则回退 lxml 自研清洗
+#   jieba        中文分词，未安装则回退字符 n-gram（粗召回关键词效果略降）
+
+PyYAML>=6.0
+requests>=2.28
+lxml>=4.9
+fake-useragent>=1.0

@@ -1,0 +1,19 @@
+# 冲突策略文案（与 settings.CONFLICT_POLICIES 一一对应）
+#
+# 把「冲突时怎么判」的措辞放在配置里，Prompt 模板只做占位拼接：
+#   换策略只改 config/filter_intent.yaml 的 conflict_policy，不必动代码与模板。
+
+natural_language: |
+  当标签信号与自然语言意图的结论不一致时，以自然语言意图为准。
+  标签只用于粗召回和解释，可以在 reason 里作为补充证据，但不得改变最终结论。
+  这种情况下请把 is_relevant 按「意图结论 + 分数阈值」给出。
+
+tags: |
+  当标签信号与自然语言意图的结论不一致时，以参考标签为准：
+  命中 must_include 或 boost 且未命中 exclude 时倾向保留，otherwise 倾向不保留。
+  即便如此，reason 仍需说明自然语言意图层面的符合情况，以及为什么以标签为准。
+
+drop_on_conflict: |
+  当标签信号与自然语言意图的结论不一致时，直接把这条内容判为不保留（is_relevant 为 false）。
+  两者结论一致时，按「意图结论 + 分数阈值」判定。
+  必须在 reason 中明确指出冲突发生在哪里。

@@ -1,0 +1,86 @@
+# =============================================================================
+# 爬虫源配置
+#
+# 支持四种源：
+#   1) 只填 URL + auto_selectors: true   → AI 生成解析规则（结果缓存复用）
+#   2) 手写 XPath                       → 精确可控
+#   3) selector_type: css + CSS 选择器  → 加载时自动转 XPath
+#   4) type: json_api / rss             → 接口源 / 订阅源，不需要解析规则
+#
+# 只填 URL 的最小配置：
+#   sources:
+#     - name: "auto-news"
+#       enabled: true
+#       url: "https://example.com/news"
+#       auto_selectors: true
+#
+# 容错：单个源写错只「跳过该源 + 打警告」，不影响其它源；未启用的占位源允许空 url/空选择器。
+# =============================================================================
+
+defaults:
+  encoding: ""            # 留空用 apparent_encoding 自动识别
+  referer: ""             # 反爬：伪造来源页，留空用站点首页
+  use_selenium: false     # 站点强 JS 渲染时设为 true
+  fetch_detail: true      # 是否进详情页抓正文
+  headers: {}             # 站点专属请求头
+
+sources:
+  # ★ 只填 URL：把 enabled 改成 true，并填上你的列表页地址即可
+  - name: "auto-news"
+    enabled: false
+    type: "html_list"
+    url: ""                             # ← 唯一必填
+    auto_selectors: true
+    max_items: 10
+
+  # 手写 XPath 的示例（默认禁用，仅作参考）
+  - name: "example-generic-blog"
+    enabled: false
+    type: "html_list"
+    url: "https://example.com/blog"
+    max_items: 5
+    referer: "https://example.com/"
+    selectors:
+      list_item: '//main//article'
+      title: './/h2//text()'
+      url: './/h1/a/@href'
+      picurl: './/img/@src'
+      summary: './/p//text()'
+      published_at: './/time/@datetime'
+      detail_content: '//article | //main'
+
+  # CSS 选择器示例：selector_type: css，加载时自动转 XPath（也支持单个选择器加 "css:" 前缀）
+  - name: "example-css"
+    enabled: false
+    type: "html_list"
+    url: "https://example.com/news"
+    selector_type: css
+    max_items: 5
+    selectors:
+      list_item: "main article"
+      title: "h2 a"
+      url: "h2 a"
+      picurl: "img"
+      detail_content: "article"
+
+  # JSON 接口源：用简化的 JSON 路径（data.list[*]、items[0] ...）定位列表与字段
+  - name: "example-json-api"
+    enabled: false
+    type: json_api
+    url: "https://example.com/api/news"
+    max_items: 10
+    json:
+      items: "data.list[*]"
+      title: "title"
+      url: "link"
+      picurl: "cover"
+      summary: "summary"
+      published_at: "published_at"
+      content: "content"        # 接口自带正文时填这个；没有就会去抓详情页
+
+  # RSS / Atom 源：无需选择器；没有 content:encoded 时会去抓详情页补齐正文
+  - name: "example-rss"
+    enabled: false
+    type: rss
+    url: "https://example.com/feed.xml"
+    max_items: 20

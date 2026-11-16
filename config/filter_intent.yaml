@@ -1,0 +1,65 @@
+# =============================================================================
+# 筛选意图配置（唯一需要改的「主题」文件）
+#
+# 双轨表达：
+#   自然语言意图 intent.description   —— 主判据，能表达 Tag 表达不了的语义
+#   Tag tags.must_include/boost/exclude —— 辅助信号 + 粗召回抓手
+#
+# 换筛选主题时：只改本文件，不要改代码、不要改 prompt 模板。
+# =============================================================================
+
+intent:
+  # 自然语言描述：告诉 AI「我要什么」。支持多行；这是精筛的主判据。
+  description: |
+    我关注与「AI Agent 工程化落地」相关的内容，特别关注：
+    - 多智能体协作、工具调用（function calling）、提示词工程、评测与可观测性；
+    - 有实操细节、代码示例或生产环境经验的分享，比如踩坑复盘、架构取舍、性能与成本数据。
+    不要：融资新闻、产品发布会通稿、标题党、纯概念科普、课程种草、招聘信息。
+
+  # 可选：正反例，帮助模型对齐边界（尤其对模糊场景有用）
+  examples:
+    include:
+      - "某团队用 Agent 做客服自动化的落地复盘"
+      - "LangGraph / AutoGen 的多智能体编排实践"
+    exclude:
+      - "某某公司完成 X 亿融资"
+      - "三分钟看懂大模型"
+
+  # 可选：可读性/体裁等软要求（会作为打分与解释的辅助依据）
+  preferences: |
+    优先：有第一手数据、有失败经验、结论可复用的长文。
+    次优：官方文档级的技术讲解。
+    不接受：通篇营销话术、无信息量的「五大趋势」罗列。
+
+  # 是否忽略 Tags 单独成立的结论（默认 false）
+  # ignore_tags: false
+
+
+tags:
+  must_include: ["Agent", "LLM"]                       # 粗召回 + 必中命中
+  boost: ["multi-agent", "tool use", "RAG", "eval"]    # 加分项
+  exclude: ["招聘", "融资", "广告", "抽奖"]            # 命中即丢弃
+
+# 冲突策略：当 Tag 与自然语言意图结论不一致时以谁为准
+#   natural_language    以自然语言意图为准（默认；Tag 只作解释线索）
+#   tags                以 Tag 为准
+#   drop_on_conflict    两者结论不一致时直接丢弃，并记录冲突原因
+conflict_policy: natural_language
+
+# 打分/阈值：is_relevant 默认等价于 intent_matched && score >= score_threshold
+score_threshold: 0.6
+
+# 粗召回配置（降低 LLM 调用量的第一道闸）
+prefilter:
+  # 本地离线实现，不依赖外部 embedding 服务：
+  #   local-hashing / local-tfidf / local —— 分词 + tf 加权 hashing 向量 + 余弦相似度
+  embedding_model: "local-hashing"
+  similarity_threshold: 0.35
+  keyword_from_intent: true    # 从 intent.description 抽取关键词辅助粗召
+  keyword_top_k: 40            # 从意图里最多抽多少个关键词
+  min_keyword_hits: 1          # 至少命中几个关键词才算召回
+  must_include_min_hits: 1     # must_include 至少命中几个
+
+# 向后兼容开关：只配 Tag、不写 intent.description 时，允许进入 legacy_tag 模式
+# （纯 Tag 判定、不调用 LLM，行为与旧版一致）。设为 false 则视为配置错误。
+allow_tag_only_legacy: true
